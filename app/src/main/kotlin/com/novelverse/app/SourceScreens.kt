@@ -144,12 +144,11 @@ fun CatalogScreen(novelId:String,vm:ReadingViewModel,onRead:(String)->Unit) {
 
 @Composable
 fun DownloadScreen(vm:ReadingViewModel,onRead:(String)->Unit) {
-    val downloads by vm.downloads.collectAsStateWithLifecycle();val progress by vm.downloadProgress.collectAsStateWithLifecycle()
+    val downloads by vm.downloads.collectAsStateWithLifecycle()
     val transfers by vm.transfers.collectAsStateWithLifecycle()
     var removal by remember { mutableStateOf<String?>(null) }
     LazyColumn(contentPadding=PaddingValues(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
         item { Text("Offline chapters",style=MaterialTheme.typography.headlineMedium)
-            if(progress.isNotBlank()){Text(progress);TextButton(onClick=vm::cancelDownloads){Text("Cancel remaining")}}
             if(downloads.isEmpty())Text("Select chapters in a novel's chapter list to download them.")
         }
         item {

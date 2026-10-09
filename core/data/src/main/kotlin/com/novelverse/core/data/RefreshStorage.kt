@@ -11,6 +11,8 @@ data class ReleaseEventEntity(@PrimaryKey val chapterId:String,val novelId:Strin
 interface RefreshDao {
     @Query("SELECT * FROM novels WHERE inLibrary=1 AND readingStatus != 'COMPLETED' LIMIT 10000") suspend fun eligibleNovels():List<NovelEntity>
     @Insert(onConflict=OnConflictStrategy.REPLACE) suspend fun schedule(target:RefreshTargetEntity)
+    @Query("UPDATE refresh_targets SET nextDue=:nextDue,lastAttempt=:attempt,lastSuccess=:success,error=:error WHERE novelId=:id AND nextDue=:expectedDue")
+    suspend fun finish(id:String,expectedDue:Long,nextDue:Long,attempt:Long,success:Long,error:String?):Int
     @Query("DELETE FROM refresh_targets") suspend fun stopAll()
     @Query("DELETE FROM refresh_targets WHERE novelId=:id") suspend fun stop(id:String)
     @Query("SELECT t.* FROM refresh_targets t JOIN novels n ON n.id=t.novelId WHERE t.nextDue<=:now AND n.inLibrary=1 AND n.readingStatus != 'COMPLETED' ORDER BY nextDue LIMIT 5") suspend fun due(now:Long):List<RefreshTargetEntity>

@@ -24,19 +24,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Install SDK
         run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
-      - name: Export baseline schema when missing
-        run: |
-          if [ ! -f core/data/schemas/com.novelverse.core.data.NovelDatabase/1.json ]; then
-            git fetch --depth=1 origin e6077716844ad583cc55edf807b9441f02833ebe
-            git worktree add "$RUNNER_TEMP/novelverse-schema-v1" e6077716844ad583cc55edf807b9441f02833ebe
-            ./gradlew -p "$RUNNER_TEMP/novelverse-schema-v1" :core:data:kspDebugKotlin
-            mkdir -p core/data/schemas/com.novelverse.core.data.NovelDatabase
-            cp "$RUNNER_TEMP/novelverse-schema-v1/core/data/schemas/com.novelverse.core.data.NovelDatabase/1.json" core/data/schemas/com.novelverse.core.data.NovelDatabase/1.json
-          fi
       - name: Unit tests, lint and APK
         run: ./gradlew :core:domain:test :core:data:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest :core:data:assembleDebugAndroidTest
       - name: Check exported schemas
-        run: git diff --exit-code -- core/data/schemas
+        run: test -z "$(git status --porcelain -- core/data/schemas)"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

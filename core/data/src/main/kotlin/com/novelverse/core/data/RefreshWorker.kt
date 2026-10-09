@@ -21,9 +21,9 @@ class RefreshWorker(context:Context,params:WorkerParameters):CoroutineWorker(con
             val now=System.currentTimeMillis()
             try {
                 dependencies.reading().refresh(target.novelId)
-                dao.schedule(target.copy(nextDue=now+TimeUnit.HOURS.toMillis(target.intervalHours.toLong()),lastAttempt=now,lastSuccess=now,error=null))
+                dao.finish(target.novelId,target.nextDue,now+TimeUnit.HOURS.toMillis(target.intervalHours.toLong()),now,now,null)
             }catch(e:CancellationException){throw e}
-            catch(e:Exception){dao.schedule(target.copy(nextDue=now+TimeUnit.HOURS.toMillis(1),lastAttempt=now,error=e.message?.take(300)))}
+            catch(e:Exception){dao.finish(target.novelId,target.nextDue,now+TimeUnit.HOURS.toMillis(1),now,target.lastSuccess,e.message?.take(300))}
         }
         deliver(dao)
         return Result.success()
@@ -35,6 +35,7 @@ class RefreshWorker(context:Context,params:WorkerParameters):CoroutineWorker(con
         manager.createNotificationChannel(NotificationChannel("chapter-updates","New chapters",NotificationManager.IMPORTANCE_DEFAULT))
         for(event in dao.pendingNotifications()) {
             val intent=applicationContext.packageManager.getLaunchIntentForPackage(applicationContext.packageName) ?: continue
+            intent.data=android.net.Uri.parse("novelverse://chapter/${event.chapterId}")
             intent.putExtra("novelId",event.novelId).putExtra("chapterId",event.chapterId).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             val pending=PendingIntent.getActivity(applicationContext,event.chapterId.hashCode(),intent,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             val notification=android.app.Notification.Builder(applicationContext,"chapter-updates").setSmallIcon(android.R.drawable.ic_menu_agenda)

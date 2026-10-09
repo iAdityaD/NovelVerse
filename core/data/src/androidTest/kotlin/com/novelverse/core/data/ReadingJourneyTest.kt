@@ -37,6 +37,45 @@ class ReadingJourneyTest {
             }
         }
     }
+    @Test fun switchingSourcesKeepsOfflineCopyProgressAndBookmarkVersion()=runTest {
+        val context=ApplicationProvider.getApplicationContext<Context>()
+        val db=Room.inMemoryDatabaseBuilder(context,NovelDatabase::class.java).build()
+        try {
+            val transport=Fixture();val prefs=Preferences()
+            val repository=LocalReadingRepository(db,transport,context,prefs)
+            repository.saveSource(definition)
+            repository.saveSource(definition.replace("fixture", "alternative").replace("Fixture", "Alternative"))
+            val novel=repository.importNovel(repository.search("fixture","Novel").single())
+            repository.importNovel(repository.search("alternative","Novel").single(),novel)
+            val chapter=repository.chapters(novel).first().first()
+            val choices=repository.chapterChoices(chapter.id).filter{it.confirmed}
+            assertEquals(2,choices.size)
+            val original=repository.loadChapter(chapter.id,choices[0].sourceChapterId)
+            repository.chooseSource(chapter.id,choices[0].sourceChapterId,"PRIMARY")
+            repository.download(chapter.id)
+            repository.bookmark(chapter.id,original.id,1,"Keep original")
+            repository.savePosition(novel,ReaderPosition(chapter.id,1,42,0.5,"TEXT"))
+            repository.chooseSource(chapter.id,choices[1].sourceChapterId,"PRIMARY")
+            transport.offline=true
+            assertEquals(original.id,repository.loadChapter(chapter.id).id)
+            assertEquals(42,repository.position(novel)?.offset)
+            repository.deleteDownload(original.id)
+            repository.clearCache()
+            val bookmark=repository.bookmarks(chapter.id).first().single()
+            assertEquals(original.id,repository.bookmarkedVersion(bookmark.id).id)
+            db.refresh().schedule(RefreshTargetEntity(novel,6,10,0,0,null))
+            db.refresh().stop(novel)
+            assertEquals(0,db.refresh().finish(novel,10,100,20,20,null))
+            assertTrue(db.refresh().schedules().first().isEmpty())
+            // A worker finishing after a user pause must not overwrite the pause.
+            val dao=db.reading()
+            dao.enqueue(TransferEntity(chapter.id,chapter.title,"QUEUED",0,null))
+            assertEquals(1,dao.claimTransfer(chapter.id))
+            dao.stopTransfers("PAUSED")
+            assertEquals(0,dao.finishTransfer(chapter.id,"COMPLETED",null))
+            assertEquals("PAUSED",dao.transfers().first().single().status)
+        }finally{db.close()}
+    }
     @Test fun searchImportReadOfflineRefreshAndBackupUseOneCanonicalNovel()=runTest {
         val context=ApplicationProvider.getApplicationContext<Context>()
         val db=Room.inMemoryDatabaseBuilder(context,NovelDatabase::class.java).build()

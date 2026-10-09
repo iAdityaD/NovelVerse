@@ -206,6 +206,10 @@ class LocalReadingRepository @Inject constructor(private val db: NovelDatabase, 
     }
     override suspend fun loadChapter(chapterId:String,sourceChapterId:String?,force:Boolean):ChapterVersion {
         try{return loadFrom(chapterId,sourceChapterId,force)}catch(e:CancellationException){throw e}catch(original:Exception){
+            if(sourceChapterId==null&&!force) {
+                val offline=dao.bestContent(chapterId)?.takeIf{it.offline}
+                if(offline!=null)return model(offline)
+            }
             if(sourceChapterId!=null||!preferences.preferences.first().autoFallback||preferences.preferences.first().localOnly)throw original
             val selected=preferredSourceChapter(chapterId) ?: dao.choices(chapterId).firstOrNull()?.id
             for(choice in dao.choices(chapterId).filter{it.id!=selected}){

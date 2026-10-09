@@ -73,7 +73,7 @@ fun ReaderScreen(novelId:String,chapterId:String,vm:ReadingViewModel,preferences
             if(preferences.readerMode==ReaderMode.CONTINUOUS) {
                 val list=rememberLazyListState()
                 var restored by remember(version.id){mutableStateOf(false)}
-                LaunchedEffect(version.id){
+                LaunchedEffect(version.id,state.restoreRevision){
                     val position=state.position
                     list.scrollToItem((position?.paragraph ?: 0).coerceIn(version.paragraphs.indices),if(position?.kind=="SCROLL")position.offset else 0)
                     restored=true
@@ -82,7 +82,7 @@ fun ReaderScreen(novelId:String,chapterId:String,vm:ReadingViewModel,preferences
                 LazyColumn(state=list,modifier=reveal,contentPadding=PaddingValues(horizontal=24.dp,vertical=20.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
                     items(version.paragraphs.size,key={"${version.id}-$it"}){i->SelectionContainer{Text(version.paragraphs[i],fontFamily=FontFamily.Serif,fontSize=preferences.fontSizeSp.sp,lineHeight=(preferences.fontSizeSp*1.6f).sp)}}
                 }
-            } else PaginatedText(version,state.position,preferences.fontSizeSp,reveal){paragraph,offset->vm.position(paragraph,offset,"TEXT")}
+            } else PaginatedText(version,state.position,state.restoreRevision,preferences.fontSizeSp,reveal){paragraph,offset->vm.position(paragraph,offset,"TEXT")}
         }
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
             TextButton(onClick={chapters.getOrNull(chapterIndex-1)?.let{onChapter(it.id)}},enabled=chapterIndex>0){Text("Previous")}
@@ -100,15 +100,29 @@ fun ReaderScreen(novelId:String,chapterId:String,vm:ReadingViewModel,preferences
         }
     },confirmButton={TextButton(onClick={sourcesOpen=false}){Text("Close")}})
     confirm?.let{choice->AlertDialog(onDismissRequest={confirm=null},title={Text("Confirm chapter identity")},text={Text("Is ‘${choice.title}’ from ${choice.sourceName} the same chapter as ‘${chapters.getOrNull(chapterIndex)?.title}’? A confirmed mapping will be saved. Do not match by number alone.")},confirmButton={TextButton(onClick={vm.open(novelId,chapterId,choice,scope=sourceScope);confirm=null;sourcesOpen=false}){Text("Same chapter")}},dismissButton={TextButton(onClick={confirm=null}){Text("Cancel")}})}
-    if(noteOpen) AlertDialog(onDismissRequest={noteOpen=false},title={Text("Bookmark this paragraph")},text={Column{
-        OutlinedTextField(note,{note=it},label={Text("Personal note (optional)")})
-        LazyColumn(Modifier.heightIn(max=240.dp)){items(bookmarks,key={it.id}){saved->TextButton(onClick={vm.openBookmark(saved);noteOpen=false}){Text("Paragraph ${saved.paragraph+1}: ${saved.note.ifBlank{"Bookmark"}}")}}}
-    },confirmButton={TextButton(onClick={vm.bookmark(note);note="";noteOpen=false}){Text("Save")}},dismissButton={TextButton(onClick={noteOpen=false}){Text("Cancel")}})
+    if (noteOpen) AlertDialog(
+        onDismissRequest = { noteOpen = false },
+        title = { Text("Bookmarks and notes") },
+        text = {
+            Column {
+                OutlinedTextField(note, { note = it }, label = { Text("Personal note (optional)") })
+                LazyColumn(Modifier.heightIn(max = 240.dp)) {
+                    items(bookmarks, key = { it.id }) { saved ->
+                        TextButton(onClick = { vm.openBookmark(saved); noteOpen = false }) {
+                            Text("Paragraph ${saved.paragraph + 1}: ${saved.note.ifBlank { "Bookmark" }}")
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { vm.bookmark(note); note = ""; noteOpen = false }) { Text("Save current position") } },
+        dismissButton = { TextButton(onClick = { noteOpen = false }) { Text("Cancel") } },
+    )
 }
 
 @OptIn(kotlinx.coroutines.FlowPreview::class)
 @Composable
-private fun PaginatedText(version:ChapterVersion,position:ReaderPosition?,fontSize:Int,modifier:Modifier,onPosition:(Int,Int)->Unit) {
+private fun PaginatedText(version:ChapterVersion,position:ReaderPosition?,restoreRevision:Int,fontSize:Int,modifier:Modifier,onPosition:(Int,Int)->Unit) {
     val measurer=rememberTextMeasurer(cacheSize=2)
     val density=LocalDensity.current
     BoxWithConstraints(modifier.padding(horizontal=24.dp,vertical=16.dp)) {
@@ -135,7 +149,7 @@ private fun PaginatedText(version:ChapterVersion,position:ReaderPosition?,fontSi
         if(pages.isEmpty()) CircularProgressIndicator() else {
             val pager=rememberPagerState(pageCount={pages.size})
             var restored by remember(version.id,width,height,fontSize){mutableStateOf(false)}
-            LaunchedEffect(pages){pager.scrollToPage(pages.indexOfLast{it.paragraph<(position?.paragraph ?: 0)||(it.paragraph==(position?.paragraph ?: 0)&&it.paragraphOffset<=(if(position?.kind=="TEXT")position.offset else 0))}.coerceAtLeast(0));restored=true}
+            LaunchedEffect(pages,restoreRevision){pager.scrollToPage(pages.indexOfLast{it.paragraph<(position?.paragraph ?: 0)||(it.paragraph==(position?.paragraph ?: 0)&&it.paragraphOffset<=(if(position?.kind=="TEXT")position.offset else 0))}.coerceAtLeast(0));restored=true}
             LaunchedEffect(pager,pages,restored){if(restored)snapshotFlow{pager.currentPage}.distinctUntilChanged().debounce(300).collect{onPosition(pages[it].paragraph,pages[it].paragraphOffset)}}
             HorizontalPager(state=pager,modifier=Modifier.fillMaxSize()){index->SelectionContainer{Text(pages[index].text,style=style,modifier=Modifier.fillMaxSize())}}
         }

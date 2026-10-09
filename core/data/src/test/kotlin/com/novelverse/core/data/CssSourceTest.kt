@@ -25,6 +25,9 @@ class CssSourceTest {
         assertTrue(RobotsPolicy.allowed(rules,"/private/public/chapter"))
         assertTrue(RobotsPolicy.allowed(rules,"/novel/1"))
     }
+    @Test(expected=IllegalArgumentException::class) fun oversizedRobotsPolicyIsRejectedRatherThanTruncated() {
+        RobotsPolicy.allowed("# empty rule\n".repeat(2001)+"User-agent: *\nDisallow: /", "/chapter")
+    }
     @Test fun absentContainerIsAnErrorNotFakeContent() {
         try{CssSource.parse(definition).paragraphs("<p>Chrome</p>","https://fiction.example");fail("Expected parser failure")}catch(_:IllegalStateException){}
     }

@@ -1,11 +1,11 @@
 # NovelVerse
 
-An Android-first, offline-first personal novel reader with source-independent novel identity.
+A native Android personal novel reader with source-independent identity, configurable website extraction, and offline storage.
 
-## Project status
+**Development preview — not a production release.** The app contains working source configuration/search, catalog import, both reader modes, manual source switching, offline downloads, update workers and metadata backup. No commercial website connector is bundled or certified. Configure only websites you are authorized to retrieve.
 
-Development follows the [architecture blueprint](docs/architecture.md). This is an early development project, **not a production reader**. No website is currently advertised as a supported integration.
+- [Build instructions and current scope](docs/development.md)
+- [Architecture blueprint](docs/architecture.md)
+- [Verification evidence and release gates](docs/verification.md)
 
-The first implementation milestone is the native Android foundation: modular boundaries, persistent manual library entries, appearance and reader-default preferences, source-adapter contracts, and automated validation. Later milestones add real source extraction, reading, multi-source matching, downloads, and updates.
-
-See the [development guide](docs/development.md) for build/run instructions, implemented scope and limitations, and the [verification record](docs/verification.md) for actual test status. Do not interpret planned capabilities in the architecture document as implemented features.
+The architecture blueprint describes the target product. It does not imply that every planned feature is implemented. Download a development APK from the `android-build-and-reports` artifact of a successful [Android verification run](https://github.com/iAdityaD/NovelVerse/actions).

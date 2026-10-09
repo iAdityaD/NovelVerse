@@ -8,7 +8,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import javax.inject.Inject
 
-data class ReaderState(val chapterId: String = "", val novelId: String = "", val version: ChapterVersion? = null, val position: ReaderPosition? = null, val loading: Boolean = false)
+data class ReaderState(val chapterId: String = "", val novelId: String = "", val version: ChapterVersion? = null, val position: ReaderPosition? = null, val loading: Boolean = false, val restoreRevision: Int = 0)
 
 @HiltViewModel
 class ReadingViewModel @Inject constructor(private val repository: ReadingRepository) : ViewModel() {
@@ -23,8 +23,6 @@ class ReadingViewModel @Inject constructor(private val repository: ReadingReposi
     var hits = MutableStateFlow<List<SearchHit>>(emptyList()); private set
     var reader = MutableStateFlow(ReaderState()); private set
     var choices = MutableStateFlow<List<ChapterChoice>>(emptyList()); private set
-    var downloadProgress = MutableStateFlow(""); private set
-    private var downloadJob: Job? = null
     private var loadJob: Job? = null
     fun chapters(novelId: String) = repository.chapters(novelId)
     fun bookmarks(chapterId: String) = repository.bookmarks(chapterId)
@@ -81,7 +79,7 @@ class ReadingViewModel @Inject constructor(private val repository: ReadingReposi
     fun openBookmark(bookmark:SavedBookmark)=operation {
         val version=repository.bookmarkedVersion(bookmark.id)
         val previous=reader.value
-        reader.value=previous.copy(version=version,position=ReaderPosition(version.chapterId,bookmark.paragraph,0,bookmark.paragraph.toDouble()/version.paragraphs.size.coerceAtLeast(1)))
+        reader.value=previous.copy(restoreRevision=previous.restoreRevision+1,version=version,position=ReaderPosition(version.chapterId,bookmark.paragraph,0,bookmark.paragraph.toDouble()/version.paragraphs.size.coerceAtLeast(1)))
     }
     fun bookmark(note: String) = operation {
         val state=reader.value; val version=state.version ?: return@operation
