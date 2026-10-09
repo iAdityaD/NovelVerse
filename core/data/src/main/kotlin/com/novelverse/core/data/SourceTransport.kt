@@ -15,20 +15,22 @@ import javax.inject.Singleton
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
+interface HtmlTransport { suspend fun html(source:CssSource,url:String):String }
+
 @Singleton
-class SourceTransport @Inject constructor() {
+class SourceTransport @Inject constructor() : HtmlTransport {
     private val locks = ConcurrentHashMap<String, Mutex>()
     private val nextRequest = ConcurrentHashMap<String, Long>()
     private val robots = ConcurrentHashMap<String, Pair<Long, String>>()
     private val client = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).callTimeout(30, TimeUnit.SECONDS)
-        .dns { host ->
+        .dns(object : Dns { override fun lookup(host: String): List<InetAddress> {
             val addresses = Dns.SYSTEM.lookup(host)
-            require(addresses.all(::publicAddress)) { "Private and local network destinations are not allowed." }
-            addresses
-        }.build()
+            if(!addresses.all(::publicAddress)) throw java.net.UnknownHostException("Private and local network destinations are not allowed.")
+            return addresses
+        } }).build()
 
-    suspend fun html(source: CssSource, url: String): String = locks.getOrPut(source.baseUrl) { Mutex() }.withLock {
+    override suspend fun html(source: CssSource, url: String): String = locks.getOrPut(source.baseUrl) { Mutex() }.withLock {
         val target = source.validateUrl(url)
         val rules = robots[source.baseUrl]?.takeIf { System.currentTimeMillis() - it.first < 900_000 }?.second
             ?: request(source, source.baseUrl + "/robots.txt", robotsRequest = true).also { robots[source.baseUrl] = System.currentTimeMillis() to it }

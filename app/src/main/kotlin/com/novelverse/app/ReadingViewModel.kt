@@ -12,7 +12,11 @@ data class ReaderState(val chapterId: String = "", val novelId: String = "", val
 
 @HiltViewModel
 class ReadingViewModel @Inject constructor(private val repository: ReadingRepository) : ViewModel() {
+    val schedules=repository.schedules().stateIn(viewModelScope,SharingStarted.WhileSubscribed(5000),emptyList())
+    val releases=repository.releases().stateIn(viewModelScope,SharingStarted.WhileSubscribed(5000),emptyList())
+    fun schedule(hours:Int,novelId:String?=null)=operation{repository.scheduleRefresh(hours,novelId);message.value=if(hours==0)"Scheduled checks paused." else "Refresh schedule saved; Android may delay execution."}
     val sources = repository.sources().stateIn(viewModelScope,SharingStarted.WhileSubscribed(5000),emptyList())
+    val transfers = repository.transfers().stateIn(viewModelScope,SharingStarted.WhileSubscribed(5000),emptyList())
     val downloads = repository.downloads().stateIn(viewModelScope,SharingStarted.WhileSubscribed(5000),emptyList())
     var message = MutableStateFlow<String?>(null); private set
     var busy = MutableStateFlow(false); private set
@@ -40,7 +44,7 @@ class ReadingViewModel @Inject constructor(private val repository: ReadingReposi
     fun search(sourceId: String, query: String) = operation { hits.value = emptyList(); hits.value = repository.search(sourceId,query); if (hits.value.isEmpty()) message.value = "No results from this source. Check the query or search selectors." }
     fun add(hit: SearchHit, novelId: String?, done: (String) -> Unit) = operation { done(repository.importNovel(hit,novelId)) }
     fun refresh(novelId: String) = operation { message.value = "${repository.refresh(novelId)} confirmed new chapters found." }
-    fun open(novelId: String, chapterId: String, source: ChapterChoice? = null, force: Boolean = false) {
+    fun open(novelId: String, chapterId: String, source: ChapterChoice? = null, force: Boolean = false, scope:String="CHAPTER") {
         loadJob?.cancel()
         val previous = reader.value
         reader.value = if (previous.chapterId == chapterId) previous.copy(loading=true) else ReaderState(chapterId,novelId,loading=true)
@@ -48,11 +52,12 @@ class ReadingViewModel @Inject constructor(private val repository: ReadingReposi
             try {
                 if (source != null && !source.confirmed) repository.confirmMapping(chapterId,source.sourceChapterId)
                 val version = repository.loadChapter(chapterId,source?.sourceChapterId,force)
+                if(source!=null)repository.chooseSource(chapterId,source.sourceChapterId,scope)
                 val saved = repository.position(novelId)?.takeIf { it.chapterId == chapterId }
                 val position = if (source != null && saved != null) saved.copy(paragraph=(saved.fraction * version.paragraphs.size).toInt().coerceIn(version.paragraphs.indices),offset=0) else saved
                 reader.value = ReaderState(chapterId,novelId,version,position)
                 choices.value = repository.chapterChoices(chapterId)
-                if (source != null) message.value = "Source changed for this reading session. Position restored approximately."
+                if (source != null) message.value = "Source selection saved. Position restored approximately."
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { reader.value = reader.value.copy(loading=false); message.value = e.message ?: "Chapter could not be loaded." }
         }
@@ -64,22 +69,13 @@ class ReadingViewModel @Inject constructor(private val repository: ReadingReposi
         reader.value = state.copy(position=position)
         viewModelScope.launch { try { repository.savePosition(state.novelId,position) } catch (e: CancellationException) { throw e } catch (_: Exception) { message.value = "Reading position could not be saved." } }
     }
-    fun download(chapters: List<CatalogChapter>) {
-        if (downloadJob?.isActive == true) return
-        downloadJob = viewModelScope.launch {
-            var completed = 0; var failed = 0
-            try {
-                for ((i,chapter) in chapters.withIndex()) {
-                    downloadProgress.value = "Downloading ${i+1}/${chapters.size}: ${chapter.title}"
-                    try { repository.download(chapter.id); completed++ }
-                    catch (e: CancellationException) { throw e }
-                    catch (_: Exception) { failed++ }
-                }
-                message.value = "$completed chapters downloaded; $failed failed. You can retry from the chapter list."
-            } finally { downloadProgress.value = "" }
-        }
-    }
-    fun cancelDownloads() { downloadJob?.cancel(); message.value = "Cancelled. Completed downloads are retained." }
+    fun download(chapters:List<CatalogChapter>)=operation{repository.enqueueDownloads(chapters.map{it.id});message.value="Added ${chapters.size} chapters to the durable queue."}
+    fun cancelDownloads()=operation{repository.cancelDownloads();message.value="Cancelled. Completed copies retained."}
+    fun pauseDownloads()=operation{repository.pauseDownloads()}
+    fun resumeDownloads()=operation{repository.resumeDownloads()}
+    fun retryDownloads()=operation{repository.retryDownloads()}
+    suspend fun exportMetadata()=repository.exportMetadata()
+    suspend fun restoreMetadata(json:String)=repository.restoreMetadata(json)
     fun deleteDownload(id: String) = operation { repository.deleteDownload(id); message.value = "Offline pin removed. Clear cache to remove unannotated cached copies." }
     fun clearCache() = operation { repository.clearCache(); message.value = "Temporary content cleared. Offline copies and bookmarked versions retained." }
     fun bookmark(note: String) = operation {

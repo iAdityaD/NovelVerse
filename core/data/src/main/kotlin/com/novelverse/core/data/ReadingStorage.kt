@@ -22,12 +22,22 @@ data class ContentBlockEntity(val versionId:String,val ordinal:Int,val text:Stri
 ], indices = [Index("versionId"), Index("chapterId")])
 data class BookmarkEntity(@PrimaryKey val id: String, val chapterId: String, val versionId: String, val paragraph: Int, val note: String)
 
+@Entity(tableName="transfer_tasks",foreignKeys=[ForeignKey(entity=ChapterEntity::class,parentColumns=["id"],childColumns=["chapterId"],onDelete=ForeignKey.RESTRICT)])
+data class TransferEntity(@PrimaryKey val chapterId:String,val title:String,val status:String,val attempts:Int,val error:String?)
+
 data class ChapterRow(val id: String, val novelId: String, val title: String, val canonicalOrder: Long, val downloaded: Boolean)
 data class DownloadRow(val id: String, val novelId: String, val title: String, val source: String, val characters: Int)
 data class ChoiceRow(val id: String, val title: String, val name: String)
 
 @Dao
 interface ReadingDao {
+    @Query("SELECT * FROM transfer_tasks ORDER BY chapterId") fun transfers():Flow<List<TransferEntity>>
+    @Query("SELECT * FROM transfer_tasks WHERE status IN ('QUEUED','RUNNING') LIMIT 20") suspend fun pendingTransfers():List<TransferEntity>
+    @Insert(onConflict=OnConflictStrategy.IGNORE) suspend fun enqueue(task:TransferEntity)
+    @Upsert suspend fun updateTransfer(task:TransferEntity)
+    @Query("UPDATE transfer_tasks SET status=:newStatus WHERE status IN ('QUEUED','RUNNING')") suspend fun stopTransfers(newStatus:String)
+    @Query("UPDATE transfer_tasks SET status='QUEUED',attempts=0,error=NULL WHERE status=:oldStatus") suspend fun restartTransfers(oldStatus:String)
+
     @Query("SELECT * FROM sources ORDER BY name") fun sources(): Flow<List<SourceEntity>>
     @Query("SELECT * FROM sources WHERE id=:id") suspend fun source(id: String): SourceEntity?
     @Upsert suspend fun saveSource(source: SourceEntity)
@@ -50,8 +60,8 @@ interface ReadingDao {
     @Query("SELECT ns.* FROM novel_sources ns JOIN source_chapters cs ON cs.novelSourceId=ns.id WHERE cs.id=:id") suspend fun linkForChapter(id: String): NovelSourceEntity
     @Query("SELECT c.id,c.novelId,c.title,c.canonicalOrder,EXISTS(SELECT 1 FROM content_versions v WHERE v.chapterId=c.id AND v.offline=1) AS downloaded FROM chapters c WHERE c.novelId=:id ORDER BY c.canonicalOrder LIMIT 10000")
     fun chapters(id: String): Flow<List<ChapterRow>>
-    @Query("SELECT * FROM content_versions WHERE chapterId=:id ORDER BY offline DESC, fetchedAt DESC LIMIT 1") suspend fun bestContent(id: String): ContentVersionEntity?
-    @Query("SELECT * FROM content_versions WHERE sourceChapterId=:id ORDER BY offline DESC, fetchedAt DESC LIMIT 1") suspend fun sourceContent(id: String): ContentVersionEntity?
+    @Query("SELECT * FROM content_versions WHERE chapterId=:id AND EXISTS(SELECT 1 FROM content_blocks WHERE versionId=content_versions.id) ORDER BY offline DESC, fetchedAt DESC LIMIT 1") suspend fun bestContent(id: String): ContentVersionEntity?
+    @Query("SELECT * FROM content_versions WHERE sourceChapterId=:id AND EXISTS(SELECT 1 FROM content_blocks WHERE versionId=content_versions.id) ORDER BY offline DESC, fetchedAt DESC LIMIT 1") suspend fun sourceContent(id: String): ContentVersionEntity?
     @Query("SELECT * FROM content_versions WHERE sourceChapterId=:sourceChapterId AND hash=:hash") suspend fun sameContent(sourceChapterId: String, hash: String): ContentVersionEntity?
     @Insert suspend fun insertBlocks(blocks:List<ContentBlockEntity>)
     @Query("SELECT * FROM content_blocks WHERE versionId=:id ORDER BY ordinal") suspend fun blocks(id:String):List<ContentBlockEntity>
@@ -68,6 +78,14 @@ interface ReadingDao {
 
 val MIGRATION_1_2 = object : Migration(1,2) {
     override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS source_policies (id TEXT NOT NULL PRIMARY KEY,novelId TEXT NOT NULL,chapterId TEXT NOT NULL,novelSourceId TEXT NOT NULL,scope TEXT NOT NULL,FOREIGN KEY(novelId) REFERENCES novels(id) ON UPDATE NO ACTION ON DELETE RESTRICT,FOREIGN KEY(novelSourceId) REFERENCES novel_sources(id) ON UPDATE NO ACTION ON DELETE RESTRICT)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_source_policies_novelId ON source_policies(novelId)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_source_policies_novelSourceId ON source_policies(novelSourceId)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS refresh_targets (novelId TEXT NOT NULL PRIMARY KEY,intervalHours INTEGER NOT NULL,nextDue INTEGER NOT NULL,lastAttempt INTEGER NOT NULL,lastSuccess INTEGER NOT NULL,error TEXT,FOREIGN KEY(novelId) REFERENCES novels(id) ON UPDATE NO ACTION ON DELETE RESTRICT)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_refresh_targets_nextDue ON refresh_targets(nextDue)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS release_events (chapterId TEXT NOT NULL PRIMARY KEY,novelId TEXT NOT NULL,title TEXT NOT NULL,discoveredAt INTEGER NOT NULL,notified INTEGER NOT NULL,FOREIGN KEY(chapterId) REFERENCES chapters(id) ON UPDATE NO ACTION ON DELETE RESTRICT)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_release_events_novelId ON release_events(novelId)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS transfer_tasks (chapterId TEXT NOT NULL PRIMARY KEY,title TEXT NOT NULL,status TEXT NOT NULL,attempts INTEGER NOT NULL,error TEXT,FOREIGN KEY(chapterId) REFERENCES chapters(id) ON UPDATE NO ACTION ON DELETE RESTRICT)")
         db.execSQL("CREATE TABLE IF NOT EXISTS content_versions (id TEXT NOT NULL PRIMARY KEY, chapterId TEXT NOT NULL, sourceChapterId TEXT NOT NULL, hash TEXT NOT NULL, characters INTEGER NOT NULL, warning TEXT, offline INTEGER NOT NULL, fetchedAt INTEGER NOT NULL, FOREIGN KEY(chapterId) REFERENCES chapters(id) ON UPDATE NO ACTION ON DELETE RESTRICT, FOREIGN KEY(sourceChapterId) REFERENCES source_chapters(id) ON UPDATE NO ACTION ON DELETE RESTRICT)")
         db.execSQL("CREATE INDEX IF NOT EXISTS index_content_versions_chapterId ON content_versions(chapterId)")
         db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_content_versions_sourceChapterId_hash ON content_versions(sourceChapterId,hash)")

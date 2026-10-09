@@ -145,12 +145,18 @@ fun CatalogScreen(novelId:String,vm:ReadingViewModel,onRead:(String)->Unit) {
 @Composable
 fun DownloadScreen(vm:ReadingViewModel,onRead:(String)->Unit) {
     val downloads by vm.downloads.collectAsStateWithLifecycle();val progress by vm.downloadProgress.collectAsStateWithLifecycle()
+    val transfers by vm.transfers.collectAsStateWithLifecycle()
     var removal by remember { mutableStateOf<String?>(null) }
     LazyColumn(contentPadding=PaddingValues(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
         item { Text("Offline chapters",style=MaterialTheme.typography.headlineMedium)
             if(progress.isNotBlank()){Text(progress);TextButton(onClick=vm::cancelDownloads){Text("Cancel remaining")}}
             if(downloads.isEmpty())Text("Select chapters in a novel's chapter list to download them.")
         }
+        item {
+            Row { TextButton(onClick=vm::pauseDownloads){Text("Pause")};TextButton(onClick=vm::resumeDownloads){Text("Resume")};TextButton(onClick=vm::retryDownloads){Text("Retry failed")} }
+            TextButton(onClick=vm::cancelDownloads){Text("Cancel pending")}
+        }
+        items(transfers,key={"task-${it.chapterId}"}){task->Text("${task.title}: ${task.status.lowercase()}${task.error?.let { " · $it" }.orEmpty()}",style=MaterialTheme.typography.bodySmall)}
         items(downloads,key={it.versionId}) { download ->
             OutlinedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) {
                 Text(download.title);Text("${download.source} · ${download.characters} characters",style=MaterialTheme.typography.bodySmall)

@@ -11,7 +11,23 @@ data class ReaderPosition(val chapterId: String, val paragraph: Int, val offset:
 data class LocalDownload(val versionId: String, val novelId: String, val title: String, val source: String, val characters: Int)
 data class SavedBookmark(val id: String, val chapterId: String, val paragraph: Int, val note: String)
 
+data class TransferState(val chapterId:String,val title:String,val status:String,val attempts:Int,val error:String?)
+data class RefreshSchedule(val novelId:String,val intervalHours:Int,val nextDue:Long,val lastAttempt:Long,val lastSuccess:Long,val error:String?)
+data class ReleaseActivity(val chapterId:String,val novelId:String,val title:String,val discoveredAt:Long)
 interface ReadingRepository {
+    suspend fun scheduleRefresh(hours:Int,novelId:String?=null)
+    fun schedules():Flow<List<RefreshSchedule>>
+    fun releases():Flow<List<ReleaseActivity>>
+
+    suspend fun enqueueDownloads(chapterIds:List<String>)
+    fun transfers():Flow<List<TransferState>>
+    suspend fun pauseDownloads()
+    suspend fun resumeDownloads()
+    suspend fun cancelDownloads()
+    suspend fun retryDownloads()
+    suspend fun exportMetadata():String
+    suspend fun restoreMetadata(json:String)
+
     fun sources(): Flow<List<WebsiteSource>>
     suspend fun saveSource(configuration: String): String
     suspend fun setSourceEnabled(id: String, enabled: Boolean)
@@ -22,6 +38,7 @@ interface ReadingRepository {
     fun chapters(novelId: String): Flow<List<CatalogChapter>>
     suspend fun loadChapter(chapterId: String, sourceChapterId: String? = null, force: Boolean = false): ChapterVersion
     suspend fun chapterChoices(chapterId: String): List<ChapterChoice>
+    suspend fun chooseSource(chapterId:String,sourceChapterId:String,scope:String)
     suspend fun confirmMapping(chapterId: String, sourceChapterId: String)
     suspend fun savePosition(novelId: String, position: ReaderPosition)
     suspend fun position(novelId: String): ReaderPosition?

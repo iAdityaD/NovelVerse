@@ -22,6 +22,7 @@ object DataModule {
     @Provides @Singleton
     fun database(@ApplicationContext context: Context): NovelDatabase =
         Room.databaseBuilder(context, NovelDatabase::class.java, "novelverse.db").addMigrations(MIGRATION_1_2).build()
+    @Provides @Singleton fun transport(transport:SourceTransport):HtmlTransport=transport
     @Provides @Singleton fun reading(repository: LocalReadingRepository): ReadingRepository = repository
     @Provides fun dao(database: NovelDatabase): NovelDao = database.novels()
     @Provides @Singleton fun novels(repository: LocalNovelRepository): NovelRepository = repository

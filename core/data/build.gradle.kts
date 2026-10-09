@@ -22,6 +22,7 @@ dependencies {
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)
     implementation(libs.datastore)
+    implementation("androidx.work:work-runtime-ktx:2.10.1")
     implementation(libs.hilt.android)
     ksp(libs.room.compiler)
     ksp(libs.hilt.compiler)

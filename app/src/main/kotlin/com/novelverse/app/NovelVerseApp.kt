@@ -39,12 +39,13 @@ private enum class Destination(val title: String, val icon: ImageVector) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NovelVerseApp(viewModel: LibraryViewModel = hiltViewModel(), reading: ReadingViewModel = hiltViewModel()) {
+fun NovelVerseApp(viewModel: LibraryViewModel = hiltViewModel(), reading: ReadingViewModel = hiltViewModel(), notificationTarget: Pair<String,String>? = null) {
     val preferences by viewModel.preferences.collectAsStateWithLifecycle()
     val nav = rememberNavController()
     val backStack by nav.currentBackStackEntryAsState()
     val route = backStack?.destination?.route ?: "library"
     val current = Destination.entries.firstOrNull { it.name == route }
+    LaunchedEffect(notificationTarget) { notificationTarget?.let{(novel,chapter)->nav.navigate("read/$novel/$chapter"){launchSingleTop=true}} }
     val snackbar = remember { SnackbarHostState() }
     val readingMessage by reading.message.collectAsStateWithLifecycle()
     LaunchedEffect(readingMessage) { readingMessage?.let { snackbar.showSnackbar(it); reading.clearMessage() } }
@@ -116,7 +117,9 @@ fun NovelVerseApp(viewModel: LibraryViewModel = hiltViewModel(), reading: Readin
                         nav.navigate("read/$id/$it") { popUpTo("read/{novelId}/{chapterId}") { inclusive=true } }
                     }
                 }
-                composable("settings") { SettingsScreen(preferences, viewModel) { nav.navigate("archived") } }
+                composable("settings") { SettingsScreen(preferences,viewModel,{nav.navigate("archived")},{nav.navigate("backup")},{nav.navigate("updates")}) }
+                composable("backup") { BackupScreen(reading) }
+                composable("updates") { UpdatesScreen(reading){novel,chapter->nav.navigate("read/$novel/$chapter")} }
                 composable("archived") {
                     val state by viewModel.archived.collectAsStateWithLifecycle()
                     if (!state.loading && state.error == null && state.novels.isEmpty()) {
@@ -281,7 +284,7 @@ private fun DetailScreen(viewModel: DetailViewModel = hiltViewModel(), onChapter
 }
 
 @Composable
-private fun SettingsScreen(state: PreferenceState, viewModel: LibraryViewModel, onArchived: () -> Unit) {
+private fun SettingsScreen(state: PreferenceState, viewModel: LibraryViewModel, onArchived: () -> Unit, onBackup:()->Unit, onUpdates:()->Unit) {
     if (state.loading) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }; return }
     if (state.error != null) { EmptyPage(Icons.Outlined.ErrorOutline, "Preferences unavailable", state.error, "Retry", viewModel::retry); return }
     val preferences = state.value
@@ -307,8 +310,10 @@ private fun SettingsScreen(state: PreferenceState, viewModel: LibraryViewModel, 
         }
         HorizontalDivider()
         Text("On this device", style = MaterialTheme.typography.titleLarge)
+        OutlinedButton(onClick=onUpdates){Text("Updates and scheduling")}
+        OutlinedButton(onClick=onBackup){Text("Backup and restore")}
         OutlinedButton(onClick = onArchived) { Text("Restore removed novels") }
-        Text("No account or tracking. Network access is used only for configured sources. Uninstalling removes local data; backup export is not yet available.")
+        Text("No account or tracking. Network access is used only for configured sources. Export a metadata backup before uninstalling; chapter bodies are not included.")
         Text("NovelVerse · 0.1.0 development preview", style = MaterialTheme.typography.labelMedium)
     }
 }

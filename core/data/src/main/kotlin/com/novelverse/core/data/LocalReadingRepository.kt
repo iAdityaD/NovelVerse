@@ -1,9 +1,14 @@
 package com.novelverse.core.data
 
 import androidx.room.withTransaction
+import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
 import com.novelverse.core.domain.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.first
+import com.novelverse.core.model.*
+import org.json.JSONObject
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -17,7 +22,41 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class LocalReadingRepository @Inject constructor(private val db: NovelDatabase, private val transport: SourceTransport) : ReadingRepository {
+class LocalReadingRepository @Inject constructor(private val db: NovelDatabase, private val transport: HtmlTransport, @ApplicationContext private val context:Context, private val preferences:PreferencesRepository) : ReadingRepository {
+    override fun transfers()=dao.transfers().map{rows->rows.map{TransferState(it.chapterId,it.title,it.status,it.attempts,it.error)}}
+    override suspend fun enqueueDownloads(chapterIds:List<String>) {
+        require(chapterIds.size<=10000)
+        db.withTransaction { chapterIds.distinct().forEach{id-> val chapter=dao.chapter(id) ?: error("Chapter not found.");dao.enqueue(TransferEntity(id,chapter.title,"QUEUED",0,null)) } }
+        DownloadWorker.enqueue(context)
+    }
+    override suspend fun pauseDownloads(){dao.stopTransfers("PAUSED");DownloadWorker.cancel(context)}
+    override suspend fun cancelDownloads(){dao.stopTransfers("CANCELLED");DownloadWorker.cancel(context)}
+    override suspend fun resumeDownloads(){dao.restartTransfers("PAUSED");DownloadWorker.enqueue(context)}
+    override suspend fun retryDownloads(){dao.restartTransfers("FAILED");dao.restartTransfers("CANCELLED");DownloadWorker.enqueue(context)}
+    override suspend fun exportMetadata():String {
+        val p=preferences.preferences.first()
+        return JSONObject(MetadataBackup(db).export()).put("preferences",JSONObject().put("theme",p.theme.name).put("readerMode",p.readerMode.name).put("fontSizeSp",p.fontSizeSp).put("libraryLayout",p.libraryLayout.name)).toString()
+    }
+    override suspend fun restoreMetadata(json:String) {
+        val p=JSONObject(json).optJSONObject("preferences")
+        val restored=p?.let{UserPreferences(AppTheme.valueOf(it.getString("theme")),ReaderMode.valueOf(it.getString("readerMode")),it.getInt("fontSizeSp"),LibraryLayout.valueOf(it.getString("libraryLayout")))}
+        require(restored==null||restored.fontSizeSp in 14..36)
+        MetadataBackup(db).restore(json)
+        if(restored!=null){preferences.setTheme(restored.theme);preferences.setReaderMode(restored.readerMode);preferences.setFontSize(restored.fontSizeSp);preferences.setLibraryLayout(restored.libraryLayout)}
+        RefreshWorker.start(context)
+    }
+    override fun schedules()=db.refresh().schedules().map{rows->rows.map{RefreshSchedule(it.novelId,it.intervalHours,it.nextDue,it.lastAttempt,it.lastSuccess,it.error)}}
+    override fun releases()=db.refresh().releases().map{rows->rows.map{ReleaseActivity(it.chapterId,it.novelId,it.title,it.discoveredAt)}}
+    override suspend fun scheduleRefresh(hours:Int,novelId:String?) {
+        require(hours in 0..168){"Use manual-only (0) or an interval from 1 to 168 hours."}
+        if(hours==0){if(novelId==null){db.refresh().stopAll();RefreshWorker.stop(context)}else db.refresh().stop(novelId);return}
+        val now=System.currentTimeMillis();val interval=java.util.concurrent.TimeUnit.HOURS.toMillis(hours.toLong())
+        val novels=db.refresh().eligibleNovels().filter{novelId==null||it.id==novelId}
+        novels.forEach{novel->
+            if(dao.links(novel.id).isNotEmpty()) db.refresh().schedule(RefreshTargetEntity(novel.id,hours,now+(novel.id.hashCode().toLong() and 0x7fffffff)%interval,0,0,null))
+        }
+        RefreshWorker.start(context)
+    }
     private val dao get() = db.reading()
     private val contentLock = Mutex()
     override fun sources() = dao.sources().map { rows -> rows.map { WebsiteSource(it.id,it.name,it.baseUrl,it.configuration,it.enabled) } }
@@ -127,7 +166,12 @@ class LocalReadingRepository @Inject constructor(private val db: NovelDatabase, 
         for ((index,link) in links.withIndex()) {
             val source = source(link.sourceId)
             val (_,entries) = catalog(source,link.url)
-            count += db.withTransaction { reconcile(link,entries,index == 0) }
+            count += db.withTransaction {
+                val known=dao.chapterList(novelId).map{it.id}.toSet()
+                val added=reconcile(link,entries,index==0)
+                dao.chapterList(novelId).filter{it.id !in known}.forEach{db.refresh().release(ReleaseEventEntity(it.id,novelId,it.title,System.currentTimeMillis(),false))}
+                added
+            }
         }
         count
     }
@@ -135,6 +179,22 @@ class LocalReadingRepository @Inject constructor(private val db: NovelDatabase, 
     override suspend fun chapterChoices(chapterId: String): List<ChapterChoice> {
         val chapter = dao.chapter(chapterId) ?: error("Chapter not found.")
         return dao.choices(chapterId).map { ChapterChoice(it.id,it.name,it.title) } + dao.unmapped(chapter.novelId).map { ChapterChoice(it.id,it.name,it.title,false) }
+    }
+    override suspend fun chooseSource(chapterId:String,sourceChapterId:String,scope:String) {
+        require(scope in setOf("CHAPTER","FROM","PRIMARY"))
+        val chapter=dao.chapter(chapterId) ?: error("Chapter missing.")
+        val link=dao.linkForChapter(sourceChapterId)
+        require(link.novelId==chapter.novelId)
+        db.policies().save(SourcePolicyEntity("${chapter.novelId}:$scope:${if(scope=="PRIMARY")"" else chapterId}",chapter.novelId,chapterId,link.id,scope))
+    }
+    private suspend fun preferredSourceChapter(chapterId:String):String? {
+        val chapter=dao.chapter(chapterId) ?: return null
+        val policies=db.policies().policies(chapter.novelId)
+        val order=dao.chapterList(chapter.novelId).associate{it.id to it.canonicalOrder}
+        val chosen=policies.firstOrNull{it.scope=="CHAPTER"&&it.chapterId==chapterId}
+            ?: policies.filter{it.scope=="FROM"&&(order[it.chapterId] ?: Long.MAX_VALUE)<=chapter.canonicalOrder}.maxByOrNull{order[it.chapterId] ?: -1}
+            ?: policies.firstOrNull{it.scope=="PRIMARY"}
+        return chosen?.let{policy->dao.choices(chapterId).firstOrNull{dao.linkForChapter(it.id).id==policy.novelSourceId}?.id}
     }
     override suspend fun confirmMapping(chapterId: String, sourceChapterId: String) = db.withTransaction {
         val chapter = dao.chapter(chapterId) ?: error("Chapter not found.")
@@ -144,10 +204,11 @@ class LocalReadingRepository @Inject constructor(private val db: NovelDatabase, 
     }
     override suspend fun loadChapter(chapterId: String, sourceChapterId: String?, force: Boolean): ChapterVersion = withContext(Dispatchers.IO) {
         contentLock.withLock {
-            val cached = if (sourceChapterId == null) dao.bestContent(chapterId) else dao.sourceContent(sourceChapterId)?.takeIf { it.chapterId == chapterId }
+            val resolvedSource=sourceChapterId ?: preferredSourceChapter(chapterId)
+            val cached = if (resolvedSource == null) dao.bestContent(chapterId) else dao.sourceContent(resolvedSource)?.takeIf { it.chapterId == chapterId }
             if (cached != null && !force) return@withLock model(cached)
             val choices = dao.choices(chapterId)
-            val selected = if (sourceChapterId != null) choices.firstOrNull { it.id == sourceChapterId } ?: error("Chapter mapping is not confirmed.") else choices.firstOrNull() ?: error("No enabled, confirmed source. Previously downloaded content remains available.")
+            val selected = if (resolvedSource != null) choices.firstOrNull { it.id == resolvedSource } ?: error("Chapter mapping is not confirmed.") else choices.firstOrNull() ?: error("No enabled, confirmed source. Previously downloaded content remains available.")
             val sourceChapter = dao.sourceChapter(selected.id) ?: error("Chapter source is missing.")
             val link = dao.linkForChapter(selected.id)
             val source = source(link.sourceId)
@@ -163,7 +224,10 @@ class LocalReadingRepository @Inject constructor(private val db: NovelDatabase, 
             val body = JSONArray(paragraphs).toString()
             val hash = MessageDigest.getInstance("SHA-256").digest(body.toByteArray()).joinToString("") { "%02x".format(it) }
             val existing = dao.sameContent(selected.id,hash)
-            if (existing != null) return@withLock model(existing)
+            if (existing != null) {
+                if(dao.blocks(existing.id).isEmpty()) dao.insertBlocks(paragraphs.mapIndexed { i,text -> ContentBlockEntity(existing.id,i,text) })
+                return@withLock model(existing)
+            }
             val length = paragraphs.sumOf(String::length)
             val warning = when { length < 400 -> "This chapter may be unusually short."; paragraphs.distinct().size < paragraphs.size * 0.7 -> "This extraction contains many repeated paragraphs."; else -> null }
             val content = ContentVersionEntity(UUID.randomUUID().toString(),chapterId,selected.id,hash,length,warning,false,System.currentTimeMillis())

@@ -42,6 +42,7 @@ fun ReaderScreen(novelId:String,chapterId:String,vm:ReadingViewModel,preferences
     var noteOpen by remember { mutableStateOf(false) }
     var note by rememberSaveable { mutableStateOf("") }
     var confirm by remember { mutableStateOf<ChapterChoice?>(null) }
+    var sourceScope by rememberSaveable { mutableStateOf("CHAPTER") }
     var sourceQuery by rememberSaveable { mutableStateOf("") }
     LaunchedEffect(novelId,chapterId){vm.open(novelId,chapterId)}
     val version=state.version?.takeIf{state.chapterId==chapterId}
@@ -90,13 +91,14 @@ fun ReaderScreen(novelId:String,chapterId:String,vm:ReadingViewModel,preferences
     }
     if(sourcesOpen) AlertDialog(onDismissRequest={sourcesOpen=false},title={Text("Choose chapter source")},text={
         Column {
+            listOf("CHAPTER" to "This chapter only","FROM" to "From here onward","PRIMARY" to "Make primary").forEach{(value,label)->FilterChip(selected=sourceScope==value,onClick={sourceScope=value},label={Text(label)})}
             OutlinedTextField(sourceQuery,{sourceQuery=it},label={Text("Find equivalent chapter")})
             LazyColumn { items(choices.filter{it.title.contains(sourceQuery,true)},key={it.sourceChapterId}){choice->
-                TextButton(onClick={if(choice.confirmed){vm.open(novelId,chapterId,choice);sourcesOpen=false}else confirm=choice}){Text("${choice.sourceName}: ${choice.title}${if(choice.confirmed)"" else " · Review required"}")}
+                TextButton(onClick={if(choice.confirmed){vm.open(novelId,chapterId,choice,scope=sourceScope);sourcesOpen=false}else confirm=choice}){Text("${choice.sourceName}: ${choice.title}${if(choice.confirmed)"" else " · Review required"}")}
             } }
         }
     },confirmButton={TextButton(onClick={sourcesOpen=false}){Text("Close")}})
-    confirm?.let{choice->AlertDialog(onDismissRequest={confirm=null},title={Text("Confirm chapter identity")},text={Text("Is ‘${choice.title}’ from ${choice.sourceName} the same chapter as ‘${chapters.getOrNull(chapterIndex)?.title}’? A confirmed mapping will be saved. Do not match by number alone.")},confirmButton={TextButton(onClick={vm.open(novelId,chapterId,choice);confirm=null;sourcesOpen=false}){Text("Same chapter")}},dismissButton={TextButton(onClick={confirm=null}){Text("Cancel")}})}
+    confirm?.let{choice->AlertDialog(onDismissRequest={confirm=null},title={Text("Confirm chapter identity")},text={Text("Is ‘${choice.title}’ from ${choice.sourceName} the same chapter as ‘${chapters.getOrNull(chapterIndex)?.title}’? A confirmed mapping will be saved. Do not match by number alone.")},confirmButton={TextButton(onClick={vm.open(novelId,chapterId,choice,scope=sourceScope);confirm=null;sourcesOpen=false}){Text("Same chapter")}},dismissButton={TextButton(onClick={confirm=null}){Text("Cancel")}})}
     if(noteOpen) AlertDialog(onDismissRequest={noteOpen=false},title={Text("Bookmark this position")},text={OutlinedTextField(note,{note=it},label={Text("Personal note (optional)")})},confirmButton={TextButton(onClick={vm.bookmark(note);note="";noteOpen=false}){Text("Save")}},dismissButton={TextButton(onClick={noteOpen=false}){Text("Cancel")}})
 }
 
