@@ -29,12 +29,13 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
 
-private data class ReaderPage(val text:String,val paragraph:Int)
+private data class ReaderPage(val text:String,val paragraph:Int,val paragraphOffset:Int)
 
 @OptIn(kotlinx.coroutines.FlowPreview::class)
 @Composable
 fun ReaderScreen(novelId:String,chapterId:String,vm:ReadingViewModel,preferences:UserPreferences,onMode:(ReaderMode)->Unit,onBack:()->Unit,onChapter:(String)->Unit) {
     val state by vm.reader.collectAsStateWithLifecycle()
+    val bookmarks by remember(chapterId){vm.bookmarks(chapterId)}.collectAsStateWithLifecycle(emptyList())
     val choices by vm.choices.collectAsStateWithLifecycle()
     val chapters by remember(novelId){vm.chapters(novelId)}.collectAsStateWithLifecycle(emptyList())
     var controls by rememberSaveable { mutableStateOf(true) }
@@ -74,14 +75,14 @@ fun ReaderScreen(novelId:String,chapterId:String,vm:ReadingViewModel,preferences
                 var restored by remember(version.id){mutableStateOf(false)}
                 LaunchedEffect(version.id){
                     val position=state.position
-                    list.scrollToItem((position?.paragraph ?: 0).coerceIn(version.paragraphs.indices),position?.offset ?: 0)
+                    list.scrollToItem((position?.paragraph ?: 0).coerceIn(version.paragraphs.indices),if(position?.kind=="SCROLL")position.offset else 0)
                     restored=true
                 }
                 LaunchedEffect(list,version.id,restored){if(restored) snapshotFlow{list.firstVisibleItemIndex to list.firstVisibleItemScrollOffset}.distinctUntilChanged().debounce(300).collect{(i,offset)->vm.position(i,offset)}}
                 LazyColumn(state=list,modifier=reveal,contentPadding=PaddingValues(horizontal=24.dp,vertical=20.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
                     items(version.paragraphs.size,key={"${version.id}-$it"}){i->SelectionContainer{Text(version.paragraphs[i],fontFamily=FontFamily.Serif,fontSize=preferences.fontSizeSp.sp,lineHeight=(preferences.fontSizeSp*1.6f).sp)}}
                 }
-            } else PaginatedText(version,state.position,preferences.fontSizeSp,reveal,vm::position)
+            } else PaginatedText(version,state.position,preferences.fontSizeSp,reveal){paragraph,offset->vm.position(paragraph,offset,"TEXT")}
         }
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
             TextButton(onClick={chapters.getOrNull(chapterIndex-1)?.let{onChapter(it.id)}},enabled=chapterIndex>0){Text("Previous")}
@@ -99,7 +100,10 @@ fun ReaderScreen(novelId:String,chapterId:String,vm:ReadingViewModel,preferences
         }
     },confirmButton={TextButton(onClick={sourcesOpen=false}){Text("Close")}})
     confirm?.let{choice->AlertDialog(onDismissRequest={confirm=null},title={Text("Confirm chapter identity")},text={Text("Is ‘${choice.title}’ from ${choice.sourceName} the same chapter as ‘${chapters.getOrNull(chapterIndex)?.title}’? A confirmed mapping will be saved. Do not match by number alone.")},confirmButton={TextButton(onClick={vm.open(novelId,chapterId,choice,scope=sourceScope);confirm=null;sourcesOpen=false}){Text("Same chapter")}},dismissButton={TextButton(onClick={confirm=null}){Text("Cancel")}})}
-    if(noteOpen) AlertDialog(onDismissRequest={noteOpen=false},title={Text("Bookmark this position")},text={OutlinedTextField(note,{note=it},label={Text("Personal note (optional)")})},confirmButton={TextButton(onClick={vm.bookmark(note);note="";noteOpen=false}){Text("Save")}},dismissButton={TextButton(onClick={noteOpen=false}){Text("Cancel")}})
+    if(noteOpen) AlertDialog(onDismissRequest={noteOpen=false},title={Text("Bookmark this paragraph")},text={Column{
+        OutlinedTextField(note,{note=it},label={Text("Personal note (optional)")})
+        LazyColumn(Modifier.heightIn(max=240.dp)){items(bookmarks,key={it.id}){saved->TextButton(onClick={vm.openBookmark(saved);noteOpen=false}){Text("Paragraph ${saved.paragraph+1}: ${saved.note.ifBlank{"Bookmark"}}")}}}
+    },confirmButton={TextButton(onClick={vm.bookmark(note);note="";noteOpen=false}){Text("Save")}},dismissButton={TextButton(onClick={noteOpen=false}){Text("Cancel")}})
 }
 
 @OptIn(kotlinx.coroutines.FlowPreview::class)
@@ -123,7 +127,7 @@ private fun PaginatedText(version:ChapterVersion,position:ReaderPosition?,fontSi
                     while(line+1<layout.lineCount&&layout.getLineBottom(line+1)<=height)line++
                     val count=layout.getLineEnd(line,visibleEnd=false).coerceAtLeast(1)
                     while(paragraph+1<starts.size&&starts[paragraph+1]<=offset)paragraph++
-                    result+=ReaderPage(sample.take(count),paragraph);offset+=count
+                    result+=ReaderPage(sample.take(count),paragraph,offset-starts[paragraph]);offset+=count
                 }
                 result
             }
@@ -131,8 +135,8 @@ private fun PaginatedText(version:ChapterVersion,position:ReaderPosition?,fontSi
         if(pages.isEmpty()) CircularProgressIndicator() else {
             val pager=rememberPagerState(pageCount={pages.size})
             var restored by remember(version.id,width,height,fontSize){mutableStateOf(false)}
-            LaunchedEffect(pages){pager.scrollToPage(pages.indexOfLast{it.paragraph<=(position?.paragraph ?: 0)}.coerceAtLeast(0));restored=true}
-            LaunchedEffect(pager,pages,restored){if(restored)snapshotFlow{pager.currentPage}.distinctUntilChanged().debounce(300).collect{onPosition(pages[it].paragraph,0)}}
+            LaunchedEffect(pages){pager.scrollToPage(pages.indexOfLast{it.paragraph<(position?.paragraph ?: 0)||(it.paragraph==(position?.paragraph ?: 0)&&it.paragraphOffset<=(if(position?.kind=="TEXT")position.offset else 0))}.coerceAtLeast(0));restored=true}
+            LaunchedEffect(pager,pages,restored){if(restored)snapshotFlow{pager.currentPage}.distinctUntilChanged().debounce(300).collect{onPosition(pages[it].paragraph,pages[it].paragraphOffset)}}
             HorizontalPager(state=pager,modifier=Modifier.fillMaxSize()){index->SelectionContainer{Text(pages[index].text,style=style,modifier=Modifier.fillMaxSize())}}
         }
     }

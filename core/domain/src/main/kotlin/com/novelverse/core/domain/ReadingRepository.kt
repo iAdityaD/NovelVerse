@@ -7,7 +7,7 @@ data class SearchHit(val sourceId: String, val title: String, val author: String
 data class CatalogChapter(val id: String, val novelId: String, val title: String, val order: Long, val downloaded: Boolean)
 data class ChapterVersion(val id: String, val chapterId: String, val sourceChapterId: String, val sourceName: String, val paragraphs: List<String>, val warning: String?, val offline: Boolean)
 data class ChapterChoice(val sourceChapterId: String, val sourceName: String, val title: String, val confirmed: Boolean = true)
-data class ReaderPosition(val chapterId: String, val paragraph: Int, val offset: Int, val fraction: Double)
+data class ReaderPosition(val chapterId: String, val paragraph: Int, val offset: Int, val fraction: Double, val kind:String="SCROLL")
 data class LocalDownload(val versionId: String, val novelId: String, val title: String, val source: String, val characters: Int)
 data class SavedBookmark(val id: String, val chapterId: String, val paragraph: Int, val note: String)
 
@@ -47,5 +47,6 @@ interface ReadingRepository {
     suspend fun deleteDownload(versionId: String)
     suspend fun clearCache()
     suspend fun bookmark(chapterId: String, versionId: String, paragraph: Int, note: String)
+    suspend fun bookmarkedVersion(bookmarkId:String):ChapterVersion
     fun bookmarks(chapterId: String): Flow<List<SavedBookmark>>
 }

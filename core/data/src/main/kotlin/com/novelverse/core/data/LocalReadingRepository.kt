@@ -5,6 +5,7 @@ import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
 import com.novelverse.core.domain.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
 import com.novelverse.core.model.*
@@ -35,14 +36,14 @@ class LocalReadingRepository @Inject constructor(private val db: NovelDatabase, 
     override suspend fun retryDownloads(){dao.restartTransfers("FAILED");dao.restartTransfers("CANCELLED");DownloadWorker.enqueue(context)}
     override suspend fun exportMetadata():String {
         val p=preferences.preferences.first()
-        return JSONObject(MetadataBackup(db).export()).put("preferences",JSONObject().put("theme",p.theme.name).put("readerMode",p.readerMode.name).put("fontSizeSp",p.fontSizeSp).put("libraryLayout",p.libraryLayout.name)).toString()
+        return JSONObject(MetadataBackup(db).export()).put("preferences",JSONObject().put("theme",p.theme.name).put("readerMode",p.readerMode.name).put("fontSizeSp",p.fontSizeSp).put("libraryLayout",p.libraryLayout.name).put("autoFallback",p.autoFallback).put("localOnly",p.localOnly)).toString()
     }
     override suspend fun restoreMetadata(json:String) {
         val p=JSONObject(json).optJSONObject("preferences")
-        val restored=p?.let{UserPreferences(AppTheme.valueOf(it.getString("theme")),ReaderMode.valueOf(it.getString("readerMode")),it.getInt("fontSizeSp"),LibraryLayout.valueOf(it.getString("libraryLayout")))}
+        val restored=p?.let{UserPreferences(AppTheme.valueOf(it.getString("theme")),ReaderMode.valueOf(it.getString("readerMode")),it.getInt("fontSizeSp"),LibraryLayout.valueOf(it.getString("libraryLayout")),it.optBoolean("autoFallback"),it.optBoolean("localOnly"))}
         require(restored==null||restored.fontSizeSp in 14..36)
         MetadataBackup(db).restore(json)
-        if(restored!=null){preferences.setTheme(restored.theme);preferences.setReaderMode(restored.readerMode);preferences.setFontSize(restored.fontSizeSp);preferences.setLibraryLayout(restored.libraryLayout)}
+        if(restored!=null){preferences.setTheme(restored.theme);preferences.setReaderMode(restored.readerMode);preferences.setFontSize(restored.fontSizeSp);preferences.setLibraryLayout(restored.libraryLayout);preferences.setAutoFallback(restored.autoFallback);preferences.setLocalOnly(restored.localOnly)}
         RefreshWorker.start(context)
     }
     override fun schedules()=db.refresh().schedules().map{rows->rows.map{RefreshSchedule(it.novelId,it.intervalHours,it.nextDue,it.lastAttempt,it.lastSuccess,it.error)}}
@@ -93,14 +94,15 @@ class LocalReadingRepository @Inject constructor(private val db: NovelDatabase, 
         source.searchResults(transport.html(source, url), url)
     }
     private data class Entry(val url: String, val title: String)
-    private suspend fun catalog(source: CssSource, url: String): Pair<String,List<Entry>> {
+    private suspend fun catalog(source: CssSource, url: String): Triple<String,String,List<Entry>> {
         var next: String? = source.validateUrl(url)
-        val visited = mutableSetOf<String>(); val entries = linkedMapOf<String,Entry>(); var title = ""
+        val visited = mutableSetOf<String>(); val entries = linkedMapOf<String,Entry>(); var title = ""; var author = ""
         while (next != null) {
             require(visited.size < 30 && visited.add(next)) { "Catalog pagination is incomplete or loops. No partial catalog will be committed." }
             val pageUrl = next
             val doc = Jsoup.parse(transport.html(source,pageUrl),pageUrl)
             if (title.isBlank()) title = doc.selectFirst(source.novelTitle)?.text().orEmpty()
+            if(author.isBlank()&&source.novelAuthor.isNotBlank())author=doc.selectFirst(source.novelAuthor)?.text().orEmpty()
             doc.select(source.catalogItem).forEach { item ->
                 val link = item.selectFirst(source.catalogLink)
                 val href = link?.absUrl("href").orEmpty()
@@ -114,12 +116,12 @@ class LocalReadingRepository @Inject constructor(private val db: NovelDatabase, 
             next = if (source.catalogNext.isBlank()) null else doc.selectFirst(source.catalogNext)?.absUrl("href")?.takeIf { it.isNotBlank() }?.let(source::validateUrl)
         }
         require(entries.isNotEmpty()) { "No chapter links were extracted. Check source rules." }
-        return title to entries.values.toList()
+        return Triple(title,author,entries.values.toList())
     }
     override suspend fun importNovel(hit: SearchHit, linkToNovelId: String?): String = withContext(Dispatchers.IO) {
         val source = source(hit.sourceId)
         val url = source.validateUrl(hit.url)
-        val (title,entries) = catalog(source,url)
+        val (title,author,entries) = catalog(source,url)
         db.withTransaction {
             val existing = dao.existing(source.id,url)
             if (existing != null) {
@@ -129,7 +131,7 @@ class LocalReadingRepository @Inject constructor(private val db: NovelDatabase, 
             }
             val novelId = linkToNovelId ?: UUID.randomUUID().toString()
             val now = System.currentTimeMillis()
-            if (linkToNovelId == null) db.novels().insert(NovelEntity(novelId,title.ifBlank { hit.title },hit.author,"","PLAN_TO_READ",now,now))
+            if (linkToNovelId == null) db.novels().insert(NovelEntity(novelId,title.ifBlank { hit.title },hit.author.ifBlank{author},"","PLAN_TO_READ",now,now))
             val primary = dao.links(novelId).isEmpty()
             val link = NovelSourceEntity(UUID.randomUUID().toString(),novelId,source.id,url,url)
             dao.insertLink(link)
@@ -165,7 +167,7 @@ class LocalReadingRepository @Inject constructor(private val db: NovelDatabase, 
         var count = 0
         for ((index,link) in links.withIndex()) {
             val source = source(link.sourceId)
-            val (_,entries) = catalog(source,link.url)
+            val (_,_,entries) = catalog(source,link.url)
             count += db.withTransaction {
                 val known=dao.chapterList(novelId).map{it.id}.toSet()
                 val added=reconcile(link,entries,index==0)
@@ -202,7 +204,17 @@ class LocalReadingRepository @Inject constructor(private val db: NovelDatabase, 
         require(candidate.novelId == chapter.novelId) { "Chapters must belong to the same novel." }
         dao.map(ChapterMappingEntity(sourceChapterId,chapter.novelId,chapterId,"USER_CONFIRMED"))
     }
-    override suspend fun loadChapter(chapterId: String, sourceChapterId: String?, force: Boolean): ChapterVersion = withContext(Dispatchers.IO) {
+    override suspend fun loadChapter(chapterId:String,sourceChapterId:String?,force:Boolean):ChapterVersion {
+        try{return loadFrom(chapterId,sourceChapterId,force)}catch(e:CancellationException){throw e}catch(original:Exception){
+            if(sourceChapterId!=null||!preferences.preferences.first().autoFallback||preferences.preferences.first().localOnly)throw original
+            val selected=preferredSourceChapter(chapterId) ?: dao.choices(chapterId).firstOrNull()?.id
+            for(choice in dao.choices(chapterId).filter{it.id!=selected}){
+                try{return loadFrom(chapterId,choice.id,force)}catch(e:CancellationException){throw e}catch(_:Exception){}
+            }
+            throw original
+        }
+    }
+    private suspend fun loadFrom(chapterId: String, sourceChapterId: String?, force: Boolean): ChapterVersion = withContext(Dispatchers.IO) {
         contentLock.withLock {
             val resolvedSource=sourceChapterId ?: preferredSourceChapter(chapterId)
             val cached = if (resolvedSource == null) dao.bestContent(chapterId) else dao.sourceContent(resolvedSource)?.takeIf { it.chapterId == chapterId }
@@ -235,6 +247,7 @@ class LocalReadingRepository @Inject constructor(private val db: NovelDatabase, 
                 dao.insertContent(content)
                 dao.insertBlocks(paragraphs.mapIndexed { index,text -> ContentBlockEntity(content.id,index,text) })
             }
+            while(dao.cacheBytes()>50L*1024*1024){if(dao.evictOldest(content.id)==0)break}
             model(content)
         }
     }
@@ -246,16 +259,24 @@ class LocalReadingRepository @Inject constructor(private val db: NovelDatabase, 
     }
     override suspend fun savePosition(novelId: String, position: ReaderPosition) {
         require(position.paragraph >= 0 && position.offset >= 0 && position.fraction in 0.0..1.0)
-        dao.progress(ReadingProgressEntity(novelId,position.chapterId,position.paragraph.toString(),position.offset,position.fraction,System.currentTimeMillis()))
+        dao.progress(ReadingProgressEntity(novelId,position.chapterId,"${position.paragraph}:${position.kind}",position.offset,position.fraction,System.currentTimeMillis()))
     }
-    override suspend fun position(novelId: String) = dao.progress(novelId)?.let { ReaderPosition(it.chapterId,it.blockAnchor.toIntOrNull() ?: 0,it.characterOffset,it.relativeProgress) }
+    override suspend fun position(novelId: String) = dao.progress(novelId)?.let { ReaderPosition(it.chapterId,it.blockAnchor.substringBefore(':').toIntOrNull() ?: 0,it.characterOffset,it.relativeProgress,it.blockAnchor.substringAfter(':',"SCROLL")) }
     override suspend fun download(chapterId: String) { val version = loadChapter(chapterId); dao.pin(version.id,true) }
     override fun downloads() = dao.downloads().map { rows -> rows.map { LocalDownload(it.id,it.novelId,it.title,it.source,it.characters) } }
     override suspend fun deleteDownload(versionId: String) { dao.pin(versionId,false) }
     override suspend fun clearCache() = contentLock.withLock { dao.clearCache() }
     override suspend fun bookmark(chapterId: String, versionId: String, paragraph: Int, note: String) {
-        require(paragraph >= 0 && note.length <= 5000)
+        val content=dao.content(versionId) ?: error("Content version missing.")
+        require(content.chapterId==chapterId)
+        require(paragraph in dao.blocks(versionId).indices && note.length <= 5000)
         dao.bookmark(BookmarkEntity(UUID.randomUUID().toString(),chapterId,versionId,paragraph,note))
+    }
+    override suspend fun bookmarkedVersion(bookmarkId:String):ChapterVersion {
+        val bookmark=dao.bookmarkById(bookmarkId) ?: error("Bookmark missing.")
+        val content=dao.content(bookmark.versionId) ?: error("Version missing.")
+        require(dao.blocks(content.id).isNotEmpty()){ "This backup retained the note but not its website text. Retrieve the chapter before reviewing the original position." }
+        return model(content)
     }
     override fun bookmarks(chapterId: String) = dao.bookmarks(chapterId).map { rows -> rows.map { SavedBookmark(it.id,it.chapterId,it.paragraph,it.note) } }
 }

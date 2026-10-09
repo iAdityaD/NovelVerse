@@ -309,6 +309,9 @@ private fun SettingsScreen(state: PreferenceState, viewModel: LibraryViewModel, 
                 fontSize = fontSize.sp, lineHeight = (fontSize * 1.5f).sp, modifier = Modifier.padding(20.dp))
         }
         HorizontalDivider()
+        Text("Source behavior",style=MaterialTheme.typography.titleLarge)
+        Row { Switch(preferences.autoFallback,viewModel::autoFallback);Text("Try another confirmed source when loading fails",Modifier.weight(1f).padding(12.dp)) }
+        Row { Switch(preferences.localOnly,viewModel::localOnly);Text("Local-only mode: block source network requests",Modifier.weight(1f).padding(12.dp)) }
         Text("On this device", style = MaterialTheme.typography.titleLarge)
         OutlinedButton(onClick=onUpdates){Text("Updates and scheduling")}
         OutlinedButton(onClick=onBackup){Text("Backup and restore")}

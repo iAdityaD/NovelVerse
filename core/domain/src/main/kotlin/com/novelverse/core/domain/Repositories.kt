@@ -16,6 +16,8 @@ interface NovelRepository {
 
 interface PreferencesRepository {
     val preferences: Flow<UserPreferences>
+    suspend fun setAutoFallback(enabled:Boolean)
+    suspend fun setLocalOnly(enabled:Boolean)
     suspend fun setTheme(theme: AppTheme)
     suspend fun setReaderMode(mode: ReaderMode)
     suspend fun setFontSize(size: Int)

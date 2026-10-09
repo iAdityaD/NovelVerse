@@ -25,4 +25,6 @@ data class UserPreferences(
     val readerMode: ReaderMode = ReaderMode.CONTINUOUS,
     val fontSizeSp: Int = 20,
     val libraryLayout: LibraryLayout = LibraryLayout.GRID,
+    val autoFallback:Boolean = false,
+    val localOnly:Boolean = false,
 )

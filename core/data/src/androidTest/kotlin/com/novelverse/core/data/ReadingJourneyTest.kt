@@ -18,6 +18,8 @@ class ReadingJourneyTest {
     private val definition="""{"schemaVersion":1,"id":"fixture","name":"Fixture","baseUrl":"https://fiction.example","searchPath":"/search","queryParameter":"q","searchItem":"article","searchTitle":"h2","searchLink":"a","novelTitle":"h1","novelAuthor":"","catalogItem":"li","catalogLink":"a","chapterContent":"main","catalogNext":"","chapterNext":""}"""
     private class Preferences:PreferencesRepository {
         override val preferences=MutableStateFlow(UserPreferences())
+        override suspend fun setAutoFallback(enabled:Boolean){preferences.value=preferences.value.copy(autoFallback=enabled)}
+        override suspend fun setLocalOnly(enabled:Boolean){preferences.value=preferences.value.copy(localOnly=enabled)}
         override suspend fun setTheme(theme:AppTheme){preferences.value=preferences.value.copy(theme=theme)}
         override suspend fun setReaderMode(mode:ReaderMode){preferences.value=preferences.value.copy(readerMode=mode)}
         override suspend fun setFontSize(size:Int){preferences.value=preferences.value.copy(fontSizeSp=size)}

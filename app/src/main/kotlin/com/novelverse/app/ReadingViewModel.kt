@@ -62,10 +62,10 @@ class ReadingViewModel @Inject constructor(private val repository: ReadingReposi
             catch (e: Exception) { reader.value = reader.value.copy(loading=false); message.value = e.message ?: "Chapter could not be loaded." }
         }
     }
-    fun position(paragraph: Int, offset: Int) {
+    fun position(paragraph: Int, offset: Int, kind:String="SCROLL") {
         val state = reader.value; val version = state.version ?: return
         val fraction = paragraph.toDouble() / version.paragraphs.size.coerceAtLeast(1)
-        val position = ReaderPosition(state.chapterId,paragraph.coerceAtLeast(0),offset.coerceAtLeast(0),fraction.coerceIn(0.0,1.0))
+        val position = ReaderPosition(state.chapterId,paragraph.coerceAtLeast(0),offset.coerceAtLeast(0),fraction.coerceIn(0.0,1.0),kind)
         reader.value = state.copy(position=position)
         viewModelScope.launch { try { repository.savePosition(state.novelId,position) } catch (e: CancellationException) { throw e } catch (_: Exception) { message.value = "Reading position could not be saved." } }
     }
@@ -78,6 +78,11 @@ class ReadingViewModel @Inject constructor(private val repository: ReadingReposi
     suspend fun restoreMetadata(json:String)=repository.restoreMetadata(json)
     fun deleteDownload(id: String) = operation { repository.deleteDownload(id); message.value = "Offline pin removed. Clear cache to remove unannotated cached copies." }
     fun clearCache() = operation { repository.clearCache(); message.value = "Temporary content cleared. Offline copies and bookmarked versions retained." }
+    fun openBookmark(bookmark:SavedBookmark)=operation {
+        val version=repository.bookmarkedVersion(bookmark.id)
+        val previous=reader.value
+        reader.value=previous.copy(version=version,position=ReaderPosition(version.chapterId,bookmark.paragraph,0,bookmark.paragraph.toDouble()/version.paragraphs.size.coerceAtLeast(1)))
+    }
     fun bookmark(note: String) = operation {
         val state=reader.value; val version=state.version ?: return@operation
         repository.bookmark(state.chapterId,version.id,state.position?.paragraph ?: 0,note)

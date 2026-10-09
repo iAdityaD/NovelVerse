@@ -33,7 +33,7 @@ fun UpdatesScreen(vm:ReadingViewModel,onRead:(String,String)->Unit) {
             Text("Updates",style=MaterialTheme.typography.headlineMedium)
             Text("Checks are spread over the interval and run when Android permits. Completed novels are paused. This schedules the novels currently linked to sources.")
             OutlinedTextField(hours,{hours=it},label={Text("Interval in hours (1–168)")},singleLine=true)
-            Button(onClick={hours.toIntOrNull()?.let{vm.schedule(it)}},enabled=hours.toIntOrNull() in 1..168){Text("Schedule linked novels")}
+            Button(onClick={hours.toIntOrNull()?.let{vm.schedule(it)}},enabled=hours.toIntOrNull()?.let{it in 1..168}==true){Text("Schedule linked novels")}
             TextButton(onClick={vm.schedule(0)}){Text("Manual refresh only")}
             if(Build.VERSION.SDK_INT>=33)TextButton(onClick={permission.launch(Manifest.permission.POST_NOTIFICATIONS)}){Text("Allow release notifications")}
         }

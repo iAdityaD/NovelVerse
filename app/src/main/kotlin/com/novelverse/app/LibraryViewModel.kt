@@ -66,6 +66,8 @@ class LibraryViewModel @Inject constructor(
             finally { _saving.value = false }
         }
     }
+    fun autoFallback(enabled:Boolean)=perform{preferencesRepository.setAutoFallback(enabled)}
+    fun localOnly(enabled:Boolean)=perform{preferencesRepository.setLocalOnly(enabled)}
     fun theme(value: AppTheme) = perform { preferencesRepository.setTheme(value) }
     fun mode(value: ReaderMode) = perform { preferencesRepository.setReaderMode(value) }
     fun font(value: Int) = perform { preferencesRepository.setFontSize(value) }

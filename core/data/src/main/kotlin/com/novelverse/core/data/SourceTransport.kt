@@ -1,6 +1,8 @@
 package com.novelverse.core.data
 
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import com.novelverse.core.domain.PreferencesRepository
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -18,7 +20,7 @@ import kotlin.coroutines.resumeWithException
 interface HtmlTransport { suspend fun html(source:CssSource,url:String):String }
 
 @Singleton
-class SourceTransport @Inject constructor() : HtmlTransport {
+class SourceTransport @Inject constructor(private val preferences:PreferencesRepository) : HtmlTransport {
     private val locks = ConcurrentHashMap<String, Mutex>()
     private val nextRequest = ConcurrentHashMap<String, Long>()
     private val robots = ConcurrentHashMap<String, Pair<Long, String>>()
@@ -31,10 +33,14 @@ class SourceTransport @Inject constructor() : HtmlTransport {
         } }).build()
 
     override suspend fun html(source: CssSource, url: String): String = locks.getOrPut(source.baseUrl) { Mutex() }.withLock {
+        require(!preferences.preferences.first().localOnly){"Local-only mode is enabled. Downloaded chapters remain available."}
         val target = source.validateUrl(url)
         val rules = robots[source.baseUrl]?.takeIf { System.currentTimeMillis() - it.first < 900_000 }?.second
             ?: request(source, source.baseUrl + "/robots.txt", robotsRequest = true).also { robots[source.baseUrl] = System.currentTimeMillis() to it }
-        require(RobotsPolicy.allowed(rules, java.net.URI(target).rawPath.orEmpty())) { "This path is restricted by the website's robots policy." }
+        require(rules.length<=65_536){"Robots policy exceeds the safe parsing limit."}
+        val uri=java.net.URI(target)
+        val path=uri.rawPath.orEmpty()+(uri.rawQuery?.let{"?$it"} ?: "")
+        require(RobotsPolicy.allowed(rules,path)&&RobotsPolicy.allowed(rules,java.net.URLDecoder.decode(path,"UTF-8"))) { "This path is restricted by the website's robots policy." }
         request(source, target)
     }
 
@@ -106,6 +112,7 @@ internal object RobotsPolicy {
         var applicable = false
         var sawRule = false
         val rules = mutableListOf<Pair<String, Boolean>>()
+        require(text.lineSequence().take(2001).count() <= 2000) { "Robots policy exceeds the safe rule limit." }
         text.lineSequence().forEach { line ->
             val parts = line.substringBefore('#').split(':', limit = 2)
             if (parts.size != 2) return@forEach

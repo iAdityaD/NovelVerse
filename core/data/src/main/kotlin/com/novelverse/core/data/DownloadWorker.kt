@@ -20,12 +20,12 @@ class DownloadWorker(context:Context,parameters:WorkerParameters):CoroutineWorke
         for(task in dao.pendingTransfers()) {
             if(isStopped)return Result.retry()
             val running=task.copy(status="RUNNING",attempts=task.attempts+1,error=null)
-            dao.updateTransfer(running)
+            if(dao.claimTransfer(task.chapterId)==0)continue
             try {
                 dependencies.reading().download(task.chapterId)
-                dao.updateTransfer(running.copy(status="COMPLETED"))
+                dao.finishTransfer(task.chapterId,"COMPLETED",null)
             }catch(e:CancellationException){throw e}
-            catch(e:Exception){dao.updateTransfer(running.copy(status=if(running.attempts<3)"QUEUED" else "FAILED",error=e.message?.take(300)))}
+            catch(e:Exception){dao.finishTransfer(task.chapterId,if(running.attempts<3)"QUEUED" else "FAILED",e.message?.take(300))}
         }
         return if(dao.pendingTransfers().isEmpty())Result.success() else Result.retry()
     }
