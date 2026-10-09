@@ -9,9 +9,15 @@
 
 These results do not certify a live third-party website. Fixtures are explicitly controlled test HTML; no fabricated source results are shipped in the app.
 
-## Current hardening verification
+## Completed hardening verification
 
-Reader anchor restoration, bookmark navigation, bounded cache cleanup, offline fallback, local-only preferences, download race protection and schema migration regression tests are undergoing CI verification. Refer to the branch's latest completed workflow; the older successful run above does not cover these later edits.
+[Run 37897765213](https://github.com/iAdityaD/NovelVerse/actions/runs/37897765213), code commit `b4fba2b8306be547281b94090a9307b3c874270f`, passed both build and API 35 instrumented jobs on 9 October 2026.
+
+- Unit tests, lint, debug/test APK compilation and strict exported-schema check passed.
+- Instrumented regression tests validated schema 1 → 2 preservation, offline fallback after a primary-source change, retained bookmark versions, pause/cancel race protection and transactional rejection of inconsistent backups.
+- Local SQLite inspection independently matched the migration's columns, foreign keys and indexes to Room's exported schema for all 14 tables.
+
+The development APK is in the run's `android-build-and-reports` artifact. Reader anchor/bookmark UI changes compile and pass lint, but targeted reader UI interaction tests remain an open gate below. The verification-record update after this code commit changes documentation only.
 
 ## Release gates still open
 
