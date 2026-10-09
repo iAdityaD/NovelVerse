@@ -54,6 +54,15 @@ class MetadataBackup(private val database:NovelDatabase) {
                     db.execSQL("INSERT OR IGNORE INTO $table (${allowed.joinToString(",")}) VALUES (${allowed.joinToString(","){"?"}})",values)
                 }
             }
+            val invalidRelations = listOf(
+                "SELECT 1 FROM content_versions v JOIN chapters c ON c.id=v.chapterId JOIN source_chapters s ON s.id=v.sourceChapterId WHERE c.novelId!=s.novelId LIMIT 1",
+                "SELECT 1 FROM bookmarks b JOIN content_versions v ON v.id=b.versionId WHERE b.chapterId!=v.chapterId OR b.paragraph<0 LIMIT 1",
+                "SELECT 1 FROM source_policies p JOIN novel_sources s ON s.id=p.novelSourceId LEFT JOIN chapters c ON c.id=p.chapterId WHERE p.novelId!=s.novelId OR c.id IS NULL OR c.novelId!=p.novelId OR p.scope NOT IN ('CHAPTER','FROM','PRIMARY') LIMIT 1",
+                "SELECT 1 FROM release_events r JOIN chapters c ON c.id=r.chapterId WHERE r.novelId!=c.novelId LIMIT 1",
+                "SELECT 1 FROM refresh_targets WHERE intervalHours<1 OR intervalHours>168 LIMIT 1",
+                "SELECT 1 FROM reading_progress WHERE characterOffset<0 OR relativeProgress<0 OR relativeProgress>1 LIMIT 1",
+            )
+            invalidRelations.forEach { sql -> db.query(sql).use { require(!it.moveToFirst()) { "Backup contains inconsistent reading metadata." } } }
             db.query("PRAGMA foreign_key_check").use{require(!it.moveToFirst()){ "Backup contains broken relationships." }}
         }
     }

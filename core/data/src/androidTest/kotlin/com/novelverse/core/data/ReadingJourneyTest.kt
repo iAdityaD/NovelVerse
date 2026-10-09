@@ -101,6 +101,11 @@ class ReadingJourneyTest {
             assertEquals(1,repository.refresh(novel));assertEquals(0,repository.refresh(novel))
             assertEquals(1,repository.releases().first().size)
             val backup=MetadataBackup(db).export()
+            val corrupted=org.json.JSONObject(backup)
+            corrupted.getJSONArray("bookmarks").getJSONObject(0).put("chapterId",chapters[1].id)
+            try { MetadataBackup(restoredDb).restore(corrupted.toString()); fail("Invalid bookmark relationship must fail") }
+            catch(_:IllegalArgumentException) { }
+            assertTrue(restoredDb.novels().observeLibrary(60,"%").first().isEmpty())
             MetadataBackup(restoredDb).restore(backup)
             MetadataBackup(restoredDb).restore(backup)
             assertEquals(1,restoredDb.novels().observeLibrary(60,"%").first().size)
