@@ -39,13 +39,15 @@ private enum class Destination(val title: String, val icon: ImageVector) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NovelVerseApp(viewModel: LibraryViewModel = hiltViewModel()) {
+fun NovelVerseApp(viewModel: LibraryViewModel = hiltViewModel(), reading: ReadingViewModel = hiltViewModel()) {
     val preferences by viewModel.preferences.collectAsStateWithLifecycle()
     val nav = rememberNavController()
     val backStack by nav.currentBackStackEntryAsState()
     val route = backStack?.destination?.route ?: "library"
     val current = Destination.entries.firstOrNull { it.name == route }
     val snackbar = remember { SnackbarHostState() }
+    val readingMessage by reading.message.collectAsStateWithLifecycle()
+    LaunchedEffect(readingMessage) { readingMessage?.let { snackbar.showSnackbar(it); reading.clearMessage() } }
     LaunchedEffect(viewModel) {
         viewModel.events.collect { event ->
             when (event) {
@@ -60,7 +62,7 @@ fun NovelVerseApp(viewModel: LibraryViewModel = hiltViewModel()) {
     NovelVerseTheme(preferences.value.theme) {
         Scaffold(
             topBar = {
-                TopAppBar(
+                if (!route.startsWith("read/")) TopAppBar(
                     title = { Text(current?.title ?: when (route) { "add" -> "Add a novel"; "archived" -> "Removed novels"; else -> "Novel details" }) },
                     navigationIcon = {
                         if (current == null) IconButton(onClick = { nav.popBackStack() }) {
@@ -99,14 +101,20 @@ fun NovelVerseApp(viewModel: LibraryViewModel = hiltViewModel()) {
                         viewModel::retry, viewModel::loadMore)
                 }
                 composable("explore") {
-                    EmptyPage(Icons.Outlined.TravelExplore, "A world of stories, your sources",
-                        "Website sources will be available in a later preview. You can already keep a personal library by adding novels manually.",
-                        "Add a novel manually", { viewModel.clearFormError(); nav.navigate("add") })
+                    val library by viewModel.library.collectAsStateWithLifecycle()
+                    SourceScreen(reading,library.novels) { nav.navigate("novel/$it") }
                 }
-                composable("downloads") {
-                    EmptyPage(Icons.Outlined.DownloadForOffline, "Your offline shelf",
-                        "Chapter downloads are not available in this preview. Your library entries are saved on this device.",
-                        "Open Library", { nav.navigate("library") { popUpTo("library"); launchSingleTop = true } })
+                composable("downloads") { DownloadScreen(reading) { nav.navigate("novel/$it") } }
+                composable("chapters/{id}") { entry ->
+                    val id=entry.arguments?.getString("id") ?: return@composable
+                    CatalogScreen(id,reading) { nav.navigate("read/$id/$it") }
+                }
+                composable("read/{novelId}/{chapterId}") { entry ->
+                    val id=entry.arguments?.getString("novelId") ?: return@composable
+                    val chapter=entry.arguments?.getString("chapterId") ?: return@composable
+                    ReaderScreen(id,chapter,reading,preferences.value,viewModel::mode,{nav.popBackStack()}) {
+                        nav.navigate("read/$id/$it") { popUpTo("read/{novelId}/{chapterId}") { inclusive=true } }
+                    }
                 }
                 composable("settings") { SettingsScreen(preferences, viewModel) { nav.navigate("archived") } }
                 composable("archived") {
@@ -129,7 +137,7 @@ fun NovelVerseApp(viewModel: LibraryViewModel = hiltViewModel()) {
                     }
                 }
                 composable("add") { AddNovelScreen(viewModel) }
-                composable("novel/{id}") { DetailScreen() }
+                composable("novel/{id}") { entry -> DetailScreen(onChapters={ nav.navigate("chapters/${entry.arguments?.getString("id")}") }) }
             }
         }
     }
@@ -224,7 +232,7 @@ private fun AddNovelScreen(viewModel: LibraryViewModel) {
     val error by viewModel.formError.collectAsStateWithLifecycle()
     Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text("Make room for a new story", style = MaterialTheme.typography.headlineMedium)
-        Text("Add its details now. Website linking and reading will follow in a later preview.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Add its details now. Link a source from Explore to load chapters.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         OutlinedTextField(title, { title = it }, label = { Text("Title") }, modifier = Modifier.fillMaxWidth().testTag("novel_title"), singleLine = true, enabled = !saving)
         OutlinedTextField(author, { author = it }, label = { Text("Author (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true, enabled = !saving)
         OutlinedTextField(description, { description = it }, label = { Text("Description (optional)") }, modifier = Modifier.fillMaxWidth(), minLines = 3, enabled = !saving)
@@ -236,7 +244,7 @@ private fun AddNovelScreen(viewModel: LibraryViewModel) {
 }
 
 @Composable
-private fun DetailScreen(viewModel: DetailViewModel = hiltViewModel()) {
+private fun DetailScreen(viewModel: DetailViewModel = hiltViewModel(), onChapters: () -> Unit) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val writeError by viewModel.writeError.collectAsStateWithLifecycle()
     var confirmRemoval by rememberSaveable { mutableStateOf(false) }
@@ -254,8 +262,8 @@ private fun DetailScreen(viewModel: DetailViewModel = hiltViewModel()) {
             ReadingStatus.entries.forEach { status ->
                 FilterChip(selected = novel.readingStatus == status, onClick = { viewModel.status(status) }, label = { Text(status.label) })
             }
-            Text("No chapter source linked", style = MaterialTheme.typography.titleMedium)
-            Text("This is a saved library entry. Live reading and source linking are not yet available in this preview.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Button(onClick=onChapters) { Text("Chapters / Read") }
+            Text("To add sources, link a search result in Explore to this novel.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             writeError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if (novel.inLibrary) OutlinedButton(onClick = { confirmRemoval = true }) { Text("Remove from Library") }
             else {
@@ -289,7 +297,7 @@ private fun SettingsScreen(state: PreferenceState, viewModel: LibraryViewModel, 
         }
         HorizontalDivider()
         Text("Reader defaults", style = MaterialTheme.typography.titleLarge)
-        Text("Saved for the upcoming reader. This sample previews your text size.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("These defaults apply to the reader.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         ReaderMode.entries.forEach { mode -> FilterChip(selected = preferences.readerMode == mode, onClick = { viewModel.mode(mode) }, label = { Text(mode.label) }) }
         Text("Text size: ${fontSize.toInt()} sp")
         Slider(value = fontSize, onValueChange = { fontSize = it }, onValueChangeFinished = { viewModel.font(fontSize.toInt()) }, valueRange = 14f..36f, steps = 21)
@@ -300,7 +308,7 @@ private fun SettingsScreen(state: PreferenceState, viewModel: LibraryViewModel, 
         HorizontalDivider()
         Text("On this device", style = MaterialTheme.typography.titleLarge)
         OutlinedButton(onClick = onArchived) { Text("Restore removed novels") }
-        Text("No account, tracking, or network access in this preview. Uninstalling removes local data; backup export is not yet available.")
+        Text("No account or tracking. Network access is used only for configured sources. Uninstalling removes local data; backup export is not yet available.")
         Text("NovelVerse · 0.1.0 development preview", style = MaterialTheme.typography.labelMedium)
     }
 }

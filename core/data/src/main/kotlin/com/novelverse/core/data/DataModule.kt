@@ -21,7 +21,8 @@ private val Context.preferences by preferencesDataStore(name = "user_preferences
 object DataModule {
     @Provides @Singleton
     fun database(@ApplicationContext context: Context): NovelDatabase =
-        Room.databaseBuilder(context, NovelDatabase::class.java, "novelverse.db").build()
+        Room.databaseBuilder(context, NovelDatabase::class.java, "novelverse.db").addMigrations(MIGRATION_1_2).build()
+    @Provides @Singleton fun reading(repository: LocalReadingRepository): ReadingRepository = repository
     @Provides fun dao(database: NovelDatabase): NovelDao = database.novels()
     @Provides @Singleton fun novels(repository: LocalNovelRepository): NovelRepository = repository
     @Provides @Singleton fun store(@ApplicationContext context: Context): DataStore<Preferences> = context.preferences

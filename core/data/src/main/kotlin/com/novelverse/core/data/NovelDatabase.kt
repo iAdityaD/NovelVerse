@@ -21,8 +21,8 @@ interface NovelDao {
 
 @Database(
     entities = [NovelEntity::class, SourceEntity::class, NovelSourceEntity::class, ChapterEntity::class,
-        SourceChapterEntity::class, ChapterMappingEntity::class, ReadingProgressEntity::class],
-    version = 1,
+        SourceChapterEntity::class, ChapterMappingEntity::class, ReadingProgressEntity::class, ContentVersionEntity::class, ContentBlockEntity::class, BookmarkEntity::class],
+    version = 2,
     exportSchema = true,
 )
-abstract class NovelDatabase : RoomDatabase() { abstract fun novels(): NovelDao }
+abstract class NovelDatabase : RoomDatabase() { abstract fun novels(): NovelDao; abstract fun reading(): ReadingDao }
